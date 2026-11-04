@@ -3,7 +3,9 @@
 #
 # The key below is the project's public anon key, the same one shipped inside
 # the app. It cannot read or write any data (usage_events has RLS on and no
-# anon grants); the request only registers activity.
+# anon grants). The job calls public.keepalive() (QueenBee repo,
+# supabase/keepalive.sql), which only returns the server time, so each run is
+# a successful database query. A rejected request does not count as activity.
 #
 # The job fails if the backend is unreachable (e.g. paused), so GitHub's
 # failure email doubles as an outage alert.
@@ -26,10 +28,14 @@ jobs:
         run: |
           set -u
           auth=$(curl -s -m 30 -o /dev/null -w "%{http_code}" "$SUPABASE_URL/auth/v1/health" -H "apikey: $SUPABASE_ANON_KEY")
-          rest=$(curl -s -m 30 -o /dev/null -w "%{http_code}" "$SUPABASE_URL/rest/v1/usage_events?select=id&limit=1" -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+          rpc=$(curl -s -m 30 -o /dev/null -w "%{http_code}" -X POST "$SUPABASE_URL/rest/v1/rpc/keepalive" -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" -H "Content-Type: application/json" -d '{}')
           echo "auth/v1/health -> $auth"
-          echo "rest/v1 (expected 401) -> $rest"
+          echo "rest/v1/rpc/keepalive -> $rpc"
           if [ "$auth" != "200" ]; then
             echo "::error::Supabase backend unreachable or unhealthy (auth health $auth). Check whether the project is paused."
+            exit 1
+          fi
+          if [ "$rpc" != "200" ]; then
+            echo "::error::keepalive() call failed ($rpc), so no database activity was registered. See supabase/keepalive.sql in the QueenBee repo."
             exit 1
           fi
