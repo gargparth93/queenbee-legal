@@ -9,6 +9,10 @@
 #
 # The job fails if the backend is unreachable (e.g. paused), so GitHub's
 # failure email doubles as an outage alert.
+#
+# GitHub disables scheduled workflows after 60 days with no repo activity, so
+# each run also re-enables this workflow through the API, which resets that
+# clock without needing commits.
 
 name: Supabase keep-alive
 
@@ -20,8 +24,23 @@ on:
 jobs:
   ping:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
     steps:
+      - name: Keep this schedule from being auto-disabled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          code=$(curl -s -m 30 -o /dev/null -w "%{http_code}" -X PUT \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/supabase-keepalive.yml/enable" \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+          echo "workflow enable -> $code"
+          if [ "$code" != "204" ]; then
+            echo "::error::Could not re-enable the workflow ($code); GitHub may disable this schedule after 60 days without commits."
+            exit 1
+          fi
       - name: Ping Supabase
+        if: always()
         env:
           SUPABASE_URL: https://jqdbffhvigwxxgrxlwog.supabase.co
           SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpxZGJmZmh2aWd3eHhncnhsd29nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4ODc5NjUsImV4cCI6MjA5NzQ2Mzk2NX0.dhScgooDuAyKpnit7fIDNSyXUQH7MHl69pIjOdv1yDA
